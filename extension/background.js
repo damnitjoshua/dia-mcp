@@ -277,20 +277,45 @@ async function pollLoop() {
       } catch (e) {
         out = { id: cmd.id, ok: false, error: String(e && e.message ? e.message : e) };
       }
-      await post('/result', out);
+      try {
+        await post('/result', out);
+      } catch (e) {
+        // The bridge restarted mid-flight. Do not let this rejection kill the loop.
+        await new Promise((r) => setTimeout(r, 1000));
+      }
     }
   } finally {
     polling = false;
   }
 }
 
+// Manifest V3 kills the worker after ~30s without a chrome.* call or event, and a
+// pending fetch does not count. This heartbeat is the only thing keeping it alive
+// while the bridge has nothing to send.
+let heartbeat = null;
+function startHeartbeat() {
+  if (heartbeat) return;
+  heartbeat = setInterval(() => {
+    try {
+      chrome.runtime.getPlatformInfo(() => void 0);
+    } catch (e) {
+      heartbeat = null;
+    }
+  }, 20000);
+}
+
 function wake() {
+  startHeartbeat();
   pollLoop();
 }
 
 // MV3 suspends the worker after a short idle period; these events bring it back.
-chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
+// 0.5 minutes is below Chromium's floor, so create() throws and nothing ever wakes the
+// worker once Dia suspends it. One minute is the minimum that actually fires.
+chrome.alarms.create('keepalive', { periodInMinutes: 1 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'keepalive') wake(); });
+if (chrome.action && chrome.action.onClicked) chrome.action.onClicked.addListener(() => wake());
+chrome.runtime.onMessage.addListener((m, s, reply) => { wake(); reply({ ok: true }); return true; });
 chrome.tabs.onActivated.addListener(() => wake());
 chrome.tabs.onUpdated.addListener(() => wake());
 chrome.windows.onFocusChanged.addListener(() => wake());

@@ -97,31 +97,55 @@ def _bridge(cmd: dict[str, Any], timeout: float | None = None) -> dict[str, Any]
         )
 
 
+def _poller_age() -> float | None:
+    """Seconds since the extension last polled the bridge, or None if unknown."""
+    try:
+        with urllib.request.urlopen(BRIDGE + "/health", timeout=2) as r:
+            return json.loads(r.read() or b"{}").get("last_poll_seconds_ago")
+    except Exception:
+        return None
+
+
+def _wake_dia() -> bool:
+    """Bring Dia forward so Chrome revives the parked service worker.
+
+    Manifest V3 kills an extension worker after ~30s without events, and a pending
+    fetch does not count. Nothing wakes it while the browser sits in the background,
+    but activating the app fires window and tab events. Set DIA_WAKE=0 to skip this.
+    """
+    if os.environ.get("DIA_WAKE", "1") == "0" or sys.platform != "darwin":
+        return False
+    try:
+        subprocess.run(
+            ["open", "-a", "Dia"],
+            check=False,
+            timeout=10,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _call(cmd: dict[str, Any], timeout: float | None = None) -> Any:
     window = timeout or CALL_TIMEOUT
+    age = _poller_age()
+    if age is None or age > 10:
+        # Parked worker: waking first turns a 30s stall into a normal call.
+        _wake_dia()
     res = _bridge(cmd, window)
     if not res.get("ok") and "timeout waiting for extension" in str(res.get("error") or ""):
-        # MV3 suspends the worker when idle and only an alarm or tab activity wakes it,
-        # so the first call after a pause can wait up to ~30s. Try once more, longer.
+        _wake_dia()
         res = _bridge(cmd, max(45.0, window))
     if not res.get("ok"):
         error = str(res.get("error") or "unknown bridge error")
         if "timeout waiting for extension" in error:
-            hint = ""
-            try:
-                with urllib.request.urlopen(BRIDGE + "/health", timeout=2) as r:
-                    health = json.loads(r.read() or b"{}")
-                age = health.get("last_poll_seconds_ago")
-                if age is None:
-                    hint = " The bridge has never seen the extension poll: load it in chrome://extensions."
-                elif age > 40:
-                    hint = f" Last extension poll was {age}s ago: Dia's worker is suspended. Click a tab in Dia, then call again."
-            except Exception:
-                pass
+            woke = "asked Dia to come forward" if _wake_dia() else "could not wake Dia"
             raise ToolError(
-                "Dia's extension worker is asleep and did not wake in time. Click any tab in "
-                "Dia to wake it, then call again. If it never wakes, reload the extension in "
-                "chrome://extensions." + hint
+                "Dia's extension worker is parked and did not answer despite being woken "
+                f"({woke}). Click any tab in Dia, then call again. If it never answers, reload "
+                "the extension in chrome://extensions."
             )
         raise ToolError(error)
     return res.get("result")
