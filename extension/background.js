@@ -8,6 +8,7 @@
 const BRIDGE = 'http://127.0.0.1:9777';
 
 let attachedTabId = null;
+let lastDialog = null;
 const net = new Map();       // requestId -> record
 const consoleLog = [];       // {level, text, ts}
 const MAX_LOG = 500;
@@ -41,6 +42,7 @@ async function attach(tabId) {
   await send('Network.enable', { maxTotalBufferSize: 100000000, maxResourceBufferSize: 20000000 });
   await send('Page.enable');
   await send('Log.enable');
+  await send('DOM.enable');
   return { tabId, url: tab.url, title: tab.title };
 }
 
@@ -82,6 +84,13 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       push({ level: params.type, text, ts: Date.now() });
     } else if (method === 'Log.entryAdded') {
       push({ level: params.entry.level || 'log', text: params.entry.text, url: params.entry.url, ts: Date.now() });
+    } else if (method === 'Page.javascriptDialogOpening') {
+      lastDialog = {
+        type: params.type,
+        message: params.message,
+        defaultPrompt: params.defaultPrompt || '',
+        url: params.url,
+      };
     }
   } catch (e) {}
 });
@@ -139,8 +148,39 @@ async function run(cmd) {
       }
       net.clear();
       consoleLog.length = 0;
+      lastDialog = null;
       return attach(tabId);
     }
+
+    case 'create_tab': {
+      const tab = await chrome.tabs.create({ url: cmd.url, active: cmd.active !== false });
+      return { tabId: tab.id, url: tab.url || cmd.url, title: tab.title || '' };
+    }
+
+    case 'close_tab': {
+      await chrome.tabs.remove(cmd.tabId);
+      if (attachedTabId === cmd.tabId) attachedTabId = null;
+      return { closed: cmd.tabId };
+    }
+
+    case 'activate_tab': {
+      const tab = await chrome.tabs.get(cmd.tabId);
+      await chrome.tabs.update(cmd.tabId, { active: true });
+      if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+      return { tabId: cmd.tabId, url: tab.url, title: tab.title };
+    }
+
+    case 'dialog': {
+      await send('Page.handleJavaScriptDialog', {
+        accept: cmd.accept !== false,
+        ...(cmd.promptText != null ? { promptText: cmd.promptText } : {}),
+      });
+      lastDialog = null;
+      return { handled: true };
+    }
+
+    case 'last_dialog':
+      return { dialog: lastDialog };
 
     case 'detach':
       return detach();

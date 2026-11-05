@@ -83,7 +83,8 @@ Any other MCP client, add this and replace the path:
 
 ## Check that it works
 
-Ask your agent: "list my Dia tabs". You should see the tabs that are open right now.
+Ask your agent: "call list_pages and tell me the page ids". You should see the tabs that are
+open right now.
 
 Or test the bridge directly:
 
@@ -95,22 +96,76 @@ It prints one line per check and ends with `18/18 checks passed`.
 
 ## Tools
 
+The names and arguments are the same as `chrome-devtools-mcp`, so instructions and prompts
+written for that server work here unchanged. Pages are addressed by `pageId` and elements by
+`uid` from `take_snapshot`, exactly as there.
+
+**Pages**
+
 | Tool | What it does |
 |---|---|
-| `dia_status` | Which tab is attached, and how many network and console entries are buffered |
-| `dia_list_tabs` | Your open web tabs: ids, titles, URLs |
-| `dia_attach` | Connects to one tab; leave the id out to use the tab you looked at last |
-| `dia_detach` | Disconnects and removes the debug banner |
-| `dia_snapshot` | The page as a list of elements (role and name), for finding what to click |
-| `dia_click` | Clicks an element by CSS selector or by visible text |
-| `dia_fill` | Types into a field by CSS selector |
-| `dia_eval` | Runs JavaScript in the page and returns the result |
-| `dia_navigate` | Sends the attached tab to a URL |
-| `dia_network` | Requests the tab made, with status, type, size, and URL |
-| `dia_network_body` | The response body of one request |
-| `dia_console` | Console messages and JavaScript errors |
-| `dia_screenshot` | A screenshot, inline or saved to a file |
-| `dia_cdp` | Any raw CDP command, for anything the tools above do not cover |
+| `list_pages` | Open pages as `pageId: title (url)` |
+| `new_page` | Open a URL in a new tab and select it |
+| `close_page` | Close a page |
+| `select_page` | Make a page current; also focuses the tab |
+| `navigate_page` | Navigate, back, forward, or reload |
+
+**Inspection**
+
+| Tool | What it does |
+|---|---|
+| `take_snapshot` | Elements with `uid`s to act on |
+| `get_css_styles` | CSS rules that apply to a `uid` |
+
+**Interaction**
+
+| Tool | What it does |
+|---|---|
+| `click` | Click a `uid`, single or double |
+| `fill` | Type into an input, textarea, or contenteditable |
+| `fill_form` | Fill several fields at once |
+| `hover` | Move the mouse over a `uid` |
+| `drag` | Drag one `uid` onto another |
+| `press_key` | Key or combination, for example `Control+A` |
+| `type_text` | Type into whatever has focus |
+| `upload_file` | Attach a local file to a file input |
+| `handle_dialog` | Accept or dismiss a JS dialog |
+| `wait_for` | Wait until text appears |
+
+**Network and console**
+
+| Tool | What it does |
+|---|---|
+| `list_network_requests` | Requests with status, type, size, URL |
+| `get_network_request` | One request with headers and response body |
+| `list_console_messages` | Console output and JS errors |
+| `get_console_message` | One message in full |
+
+**Emulation and capture**
+
+| Tool | What it does |
+|---|---|
+| `emulate` | Network, CPU, geolocation, user agent, media, viewport, headers |
+| `resize_page` | Viewport size (emulated, because Dia rejects window resizing) |
+| `take_screenshot` | Page, `uid`, or full page; inline or to a file |
+| `evaluate_script` | Run a function in the page and return the value |
+
+**Present for parity, unavailable on Dia** (each fails with a clear message)
+
+| Tool | Why |
+|---|---|
+| `lighthouse_audit` | Lighthouse needs to drive its own browser |
+| `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight` | tracing needs browser-level events the extension cannot reach |
+| `screencast_start`, `screencast_stop` | continuous frame streaming |
+| `take_heapsnapshot` | heap profiler chunks (this also fails on Dia via chrome-devtools-mcp) |
+
+**Extras beyond chrome-devtools-mcp**
+
+| Tool | What it does |
+|---|---|
+| `dia_status` | Attachment state, buffered traffic, page map |
+| `dia_detach` | Disconnect and clear the debug banner |
+| `dia_cdp` | Raw CDP command escape hatch |
 
 ## dia mcp vs Chrome DevTools MCP
 
@@ -128,29 +183,31 @@ the right tool. The difference is where it gets its browser.
 
 ### What dia mcp does the same
 
-| Capability | chrome-devtools-mcp | dia-mcp |
+Same tool names, same arguments, same `pageId` and `uid` semantics. The differences are
+under the hood:
+
+| | chrome-devtools-mcp | dia-mcp |
 |---|---|---|
-| Read page structure as elements | `take_snapshot` | `dia_snapshot` |
-| Click, type, press keys | `click`, `fill`, `type_text` | `dia_click`, `dia_fill` |
-| Run JavaScript | `evaluate_script` | `dia_eval` |
-| Navigate, back, forward, reload | `navigate_page` | `dia_navigate`, `dia_eval` |
-| List network requests | `list_network_requests` | `dia_network` |
-| Read a response body | `get_network_request` | `dia_network_body` |
-| Console messages and errors | `list_console_messages` | `dia_console` |
-| Screenshots | `take_screenshot` | `dia_screenshot` |
-| Device metrics, user agent, throttling | `emulate` | `dia_cdp` |
-| Anything not covered | not exposed | `dia_cdp` raw passthrough |
+| Page addressing | `pageId` 1..N | `pageId` 1..N |
+| Element addressing | `uid` from `take_snapshot` | `uid` from `take_snapshot` |
+| Snapshot shape | indented accessibility tree | flat `uid role "name"` list |
+| Click and typing | synthesised input events | `element.click()`, native value setter, plus real `Input` events for hover, drag and keys |
+| One-shot HTTP calls | `get_network_request` | same, with the body included |
+| Failures | tool error | `ToolError` with the reason |
 
 ### What dia mcp does not do
+
+Every unavailable tool still exists in the list and fails with an explicit reason, so an agent
+that expects the full surface gets a clear answer instead of a missing tool.
 
 | Missing | Why | Workaround |
 |---|---|---|
 | Launch or own a browser | Dia cannot take a debug flag without a restart | use `chrome-devtools-mcp` for throwaway browsing |
-| Lighthouse audits | not implemented | run Lighthouse in Chrome |
-| Performance traces with a summary | not implemented | `dia_cdp` with the `Tracing` domain |
-| Heap snapshots, screencast, PWA tools | not implemented | `dia_cdp` covers some of it |
-| CSS matched rules as a tidy report | not implemented | `dia_cdp` with `CSS.getMatchedStylesForNode` |
-| Parallel work on many tabs | one `chrome.debugger` attachment at a time | attach, act, attach elsewhere |
+| `lighthouse_audit` | Lighthouse needs to drive its own browser instance | run Lighthouse in Chrome |
+| `performance_start_trace`, `performance_stop_trace`, `performance_analyze_insight` | tracing needs browser-level events the extension cannot reach | the DevTools Performance panel |
+| `screencast_start`, `screencast_stop` | continuous frame streaming | `take_screenshot` in a loop |
+| `take_heapsnapshot` | heap profiler chunks; this also fails on Dia through chrome-devtools-mcp | the DevTools Memory panel |
+| Parallel work on many tabs | one `chrome.debugger` attachment at a time | act on one page, then `select_page` another |
 | `chrome://` pages | the protocol forbids it | none |
 | Working while DevTools is open on the tab | one debugger per tab | close DevTools on that tab |
 
