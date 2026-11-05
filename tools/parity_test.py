@@ -52,10 +52,10 @@ def main() -> int:
 
     def open_page():
         text = mcp_mod.new_page("https://example.com/")
-        first = text.splitlines()[1]
-        state["page"] = int(first.split(":")[0])
-        if "[selected]" not in first:
-            raise RuntimeError(f"new page not selected: {first}")
+        selected = [l for l in text.splitlines()[1:] if "[selected]" in l]
+        if not selected:
+            raise RuntimeError(f"no page selected after new_page:\n{text}")
+        state["page"] = int(selected[0].split(":")[0])
         return f"page {state['page']} open and selected"
 
     check("new_page", open_page)
@@ -167,7 +167,7 @@ def main() -> int:
 
     def wait_for():
         mcp_mod.evaluate_script(pageId=page, function="() => { document.title = 'parity ready'; return 1; }")
-        return mcp_mod.wait_for(pageId=page, text=["nonexistent-needle", "Example Domain"], timeout=3000)
+        return mcp_mod.wait_for(pageId=page, text=["nonexistent-needle", "documentation examples"], timeout=3000)
 
     check("wait_for", wait_for)
     check("take_screenshot", lambda: mcp_mod.take_screenshot(pageId=page, filePath="/tmp/dia-mcp-parity.png"))

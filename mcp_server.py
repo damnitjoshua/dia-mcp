@@ -105,7 +105,21 @@ def _call(cmd: dict[str, Any], timeout: float | None = None) -> Any:
 
 
 def _cdp(method: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
-    return _call({"type": "cdp", "method": method, "params": params or {}}, timeout) or {}
+    res = _call({"type": "cdp", "method": method, "params": params or {}}, timeout)
+    if isinstance(res, dict):
+        error = res.get("error")
+        if error:
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise ToolError(f"{method} failed: {message}")
+        if "result" in res:
+            inner = res.get("result")
+            return inner if isinstance(inner, dict) else {}
+    return res or {}
+
+
+def _ensure_dom() -> None:
+    """Prime the DOM agent. resolveNode, getBoxModel and CSS all fail without it."""
+    _cdp("DOM.getDocument", {"depth": 1})
 
 
 # --------------------------------------------------------------------------
@@ -166,6 +180,7 @@ def _uid_node(uid: str) -> int:
 
 
 def _resolve_object(backend_node_id: int) -> str:
+    _ensure_dom()
     res = _cdp("DOM.resolveNode", {"backendNodeId": backend_node_id})
     obj = (res.get("object") or {})
     if not obj.get("objectId"):
@@ -191,6 +206,7 @@ def _call_on_element(backend_node_id: int, function: str, args: list[Any] | None
 
 
 def _box(backend_node_id: int) -> dict[str, float]:
+    _ensure_dom()
     model = _cdp("DOM.getBoxModel", {"backendNodeId": backend_node_id}).get("model") or {}
     quad = model.get("content") or model.get("border") or []
     if len(quad) < 8:
@@ -879,6 +895,7 @@ def get_css_styles(pageId: int | None = None, uid: str = "") -> str:
     """
     _use_page(pageId)
     backend = _uid_node(uid)
+    _ensure_dom()
     pushed = _cdp("DOM.pushNodesByBackendIdsToFrontend", {"backendNodeIds": [backend]})
     node_ids = pushed.get("nodeIds") or []
     if not node_ids:
