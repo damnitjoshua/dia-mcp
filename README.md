@@ -125,7 +125,9 @@ npx @modelcontextprotocol/inspector --cli python3 mcp_server.py \
 npx @modelcontextprotocol/inspector python3 mcp_server.py
 ```
 
-The server runs with FastMCP's banner off, so those JSON pipelines stay clean.
+The server runs with FastMCP's banner off, so those JSON pipelines stay clean. Note that a
+failing tool call prints its reason on stderr and leaves stdout empty, so in a script check the
+exit code before piping into `jq`.
 
 `curl -s http://127.0.0.1:9777/health` reports `pollers` and `last_poll_seconds_ago`. A
 single poller a few seconds old means the extension is alive; a growing age means Dia has
