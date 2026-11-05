@@ -114,8 +114,4 @@ It prints one line per check and should end with `18/18 checks passed`.
 
 ## License
 
-PolyForm Noncommercial License 1.0.0. Free to use for personal projects, hobby work,
-research, study, and by noncommercial organizations.
-
-Commercial use is not permitted. If you want to use it commercially, contact the author for
-a separate license.
+MIT. Use it, change it, ship it, sell it. Keep the copyright notice with the code.
