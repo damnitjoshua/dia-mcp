@@ -98,9 +98,21 @@ def _bridge(cmd: dict[str, Any], timeout: float | None = None) -> dict[str, Any]
 
 
 def _call(cmd: dict[str, Any], timeout: float | None = None) -> Any:
-    res = _bridge(cmd, timeout)
+    window = timeout or CALL_TIMEOUT
+    res = _bridge(cmd, window)
+    if not res.get("ok") and "timeout waiting for extension" in str(res.get("error") or ""):
+        # MV3 suspends the worker when idle and only an alarm or tab activity wakes it,
+        # so the first call after a pause can wait up to ~30s. Try once more, longer.
+        res = _bridge(cmd, max(45.0, window))
     if not res.get("ok"):
-        raise ToolError(str(res.get("error") or "unknown bridge error"))
+        error = str(res.get("error") or "unknown bridge error")
+        if "timeout waiting for extension" in error:
+            raise ToolError(
+                "Dia's extension worker is asleep and did not wake in time. Click any tab in "
+                "Dia to wake it, then call again. If it never wakes, reload the extension in "
+                "chrome://extensions."
+            )
+        raise ToolError(error)
     return res.get("result")
 
 
@@ -690,7 +702,10 @@ def get_network_request(pageId: int | None = None, reqid: int | None = None) -> 
     request_id = ids[index]
     meta = (_call({"type": "network", "limit": 500}) or {}).get("requests") or []
     record = next((r for r in meta if str(r.get("requestId")) == request_id), {})
-    body = (_call({"type": "body", "requestId": request_id, "max": 4000}) or {}).get("body", "")
+    try:
+        body = (_call({"type": "body", "requestId": request_id, "max": 4000}) or {}).get("body", "")
+    except ToolError:
+        body = "(no body available: empty response, 204, or blocked request)"
     head = [f"## Request {index + 1}", f"{record.get('method')} {record.get('url')}",
             f"status: {record.get('status')}  type: {record.get('type')}  bytes: {record.get('bytes')}"]
     return "\n".join(head) + "\n\n### Response body\n" + (body or "(empty)")[:4000]

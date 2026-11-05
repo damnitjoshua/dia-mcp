@@ -40,6 +40,7 @@ def main() -> int:
 
     res = call({"type": "attach"}, timeout=20)
     attached = res.get("ok")
+    home_tab = (res.get("result") or {}).get("tabId")
     results.append(ok("attach to live tab", res, json.dumps(res.get("result"))[:110]))
     if not attached:
         return 1
@@ -93,19 +94,40 @@ def main() -> int:
     results.append(ok("clean up injected widget", res))
 
     # Network: fire a same-origin request, then read it back plus its body.
-    res = call({"type": "eval", "expression": "fetch('/manifest.json',{cache:'no-store'}).then(r=>r.status).catch(e=>'ERR '+e)", "awaitPromise": True})
+    res = call({"type": "eval", "expression": f"fetch(location.pathname + '?dia-probe=1', {{cache:'no-store'}}).then(r=>r.status).catch(e=>'ERR '+e)", "awaitPromise": True})
     results.append(ok("fetch completes on focused tab", res, str((res.get("result") or {}).get("value"))[:40]))
 
     time.sleep(1)
     res = call({"type": "network", "limit": 20})
     reqs = (res.get("result") or {}).get("requests") or []
-    target = next((r for r in reversed(reqs) if r.get("status")), None)
+    with_body = [r for r in reqs if r.get("status") == 200]
+    probe = [r for r in with_body if "dia-probe=1" in str(r.get("url"))]
+    target = (probe or with_body[-1:] or [r for r in reversed(reqs) if r.get("status")] or [None])[-1]
     results.append(ok("network capture", res, f"{len(reqs)} requests; last with status={str((target or {}).get('url'))[:60]} status={(target or {}).get('status')}"))
 
-    if target and target.get("requestId"):
-        res = call({"type": "body", "requestId": target["requestId"], "max": 200})
-        body = (res.get("result") or {}).get("body", "") if res.get("ok") else ""
-        results.append(ok("read response body", res, f"{len(body)} chars: {body[:60]!r}"))
+    # Service-worker-served responses on a page we do not own can refuse bodies, so
+    # verify body retrieval on a tab this test opens and closes itself.
+    own = call({"type": "create_tab", "url": "https://example.com/", "active": True})
+    own_tab = (own.get("result") or {}).get("tabId")
+    if own_tab:
+        time.sleep(1.0)
+        call({"type": "attach", "tabId": own_tab}, timeout=20)
+        call({"type": "eval", "expression": "fetch('/?dia-body=1',{cache:'no-store'}).then(r=>r.status)", "awaitPromise": True})
+        time.sleep(1.0)
+        own_reqs = (call({"type": "network", "limit": 20}).get("result") or {}).get("requests") or []
+        probe = [r for r in own_reqs if "dia-body=1" in str(r.get("url"))]
+        if probe:
+            res = call({"type": "body", "requestId": probe[-1]["requestId"], "max": 200})
+            body = (res.get("result") or {}).get("body", "") if res.get("ok") else ""
+            results.append(ok("read response body (own tab)", res, f"{len(body)} chars: {body[:60]!r}"))
+        else:
+            results.append(ok("read response body (own tab)", {"ok": False, "error": "probe request not captured"}))
+        call({"type": "close_tab", "tabId": own_tab})
+        if home_tab:
+            call({"type": "attach", "tabId": home_tab}, timeout=20)
+            call({"type": "cdp", "method": "Page.bringToFront", "params": {}})
+    else:
+        results.append(ok("read response body (own tab)", {"ok": False, "error": "could not open a tab"}))
 
     res = call({"type": "eval", "expression": "console.log('dia-bridge console probe'); 'ok'"})
     results.append(ok("emit console message", res))

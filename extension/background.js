@@ -251,30 +251,50 @@ async function run(cmd) {
 }
 
 // ---------- long-poll loop ----------
+// Exactly one loop may run. The alarm and the wake events below can fire at any
+// time, and two concurrent loops split commands between them: one holds a long
+// poll the other never sees, so calls look random and time out.
+let polling = false;
+
 async function pollLoop() {
-  for (;;) {
-    let cmd = null;
-    try {
-      const res = await fetch(BRIDGE + '/cmd', { cache: 'no-store' });
-      if (res.status === 200) cmd = await res.json();
-      else await new Promise((r) => setTimeout(r, 500));
-    } catch (e) {
-      await new Promise((r) => setTimeout(r, 1000));
-      continue;
+  if (polling) return;
+  polling = true;
+  try {
+    for (;;) {
+      let cmd = null;
+      try {
+        const res = await fetch(BRIDGE + '/cmd', { cache: 'no-store' });
+        if (res.status === 200) cmd = await res.json();
+        else await new Promise((r) => setTimeout(r, 500));
+      } catch (e) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      if (!cmd || !cmd.id) continue;
+      let out;
+      try {
+        out = { id: cmd.id, ok: true, result: await run(cmd) };
+      } catch (e) {
+        out = { id: cmd.id, ok: false, error: String(e && e.message ? e.message : e) };
+      }
+      await post('/result', out);
     }
-    if (!cmd || !cmd.id) continue;
-    let out;
-    try {
-      out = { id: cmd.id, ok: true, result: await run(cmd) };
-    } catch (e) {
-      out = { id: cmd.id, ok: false, error: String(e && e.message ? e.message : e) };
-    }
-    await post('/result', out);
+  } finally {
+    polling = false;
   }
 }
 
-// MV3 can suspend the worker; an alarm restarts the loop.
-chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'keepalive') pollLoop(); });
+function wake() {
+  pollLoop();
+}
 
-pollLoop();
+// MV3 suspends the worker after a short idle period; these events bring it back.
+chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'keepalive') wake(); });
+chrome.tabs.onActivated.addListener(() => wake());
+chrome.tabs.onUpdated.addListener(() => wake());
+chrome.windows.onFocusChanged.addListener(() => wake());
+chrome.runtime.onStartup.addListener(() => wake());
+chrome.runtime.onInstalled.addListener(() => wake());
+
+wake();
