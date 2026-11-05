@@ -107,10 +107,21 @@ def _call(cmd: dict[str, Any], timeout: float | None = None) -> Any:
     if not res.get("ok"):
         error = str(res.get("error") or "unknown bridge error")
         if "timeout waiting for extension" in error:
+            hint = ""
+            try:
+                with urllib.request.urlopen(BRIDGE + "/health", timeout=2) as r:
+                    health = json.loads(r.read() or b"{}")
+                age = health.get("last_poll_seconds_ago")
+                if age is None:
+                    hint = " The bridge has never seen the extension poll: load it in chrome://extensions."
+                elif age > 40:
+                    hint = f" Last extension poll was {age}s ago: Dia's worker is suspended. Click a tab in Dia, then call again."
+            except Exception:
+                pass
             raise ToolError(
                 "Dia's extension worker is asleep and did not wake in time. Click any tab in "
                 "Dia to wake it, then call again. If it never wakes, reload the extension in "
-                "chrome://extensions."
+                "chrome://extensions." + hint
             )
         raise ToolError(error)
     return res.get("result")
@@ -663,19 +674,21 @@ def list_network_requests(
     """
     pid = _use_page(pageId)
     res = _call({"type": "network", "limit": 500}) or {}
-    reqs = res.get("requests") or []
+    all_reqs = res.get("requests") or []
+    # reqids are full-list positions so they stay stable across filtered listings.
+    _net_ids[pid] = [str(r.get("requestId")) for r in all_reqs]
+    indexed = list(enumerate(all_reqs, start=1))
     if types:
         wanted = {t.lower() for t in types}
-        reqs = [r for r in reqs if str(r.get("type") or "").lower() in wanted]
-    _net_ids[pid] = [str(r.get("requestId")) for r in reqs]
-    start = max(0, pageIdx) * pageSize
-    window = reqs[start:start + pageSize]
-    if not reqs:
+        indexed = [(i, r) for i, r in indexed if str(r.get("type") or "").lower() in wanted]
+    if not indexed:
         return "## Network requests\n(none captured yet; reload the page after attaching)"
-    lines = [f"## Network requests (showing {start + 1}-{start + len(window)} of {len(reqs)})"]
-    for offset, r in enumerate(window):
+    start = max(0, pageIdx) * pageSize
+    window = indexed[start:start + pageSize]
+    lines = [f"## Network requests (showing {start + 1}-{start + len(window)} of {len(indexed)})"]
+    for reqid, r in window:
         lines.append(
-            f"reqid={start + offset + 1} {r.get('method') or 'GET'} {r.get('url')} "
+            f"reqid={reqid} {r.get('method') or 'GET'} {r.get('url')} "
             f"[{r.get('status') or 'pending'}, {r.get('type') or '?'}, {r.get('bytes') or 0} bytes]"
         )
     return "\n".join(lines)
@@ -728,17 +741,19 @@ def list_console_messages(
     """
     pid = _use_page(pageId)
     entries = (_call({"type": "console", "limit": 500}) or {}).get("entries") or []
+    # msgids are full-list positions so they stay stable across filtered listings.
+    _console_ids[pid] = entries
+    indexed = list(enumerate(entries, start=1))
     if types:
         wanted = {t.lower() for t in types}
-        entries = [e for e in entries if str(e.get("level") or "").lower() in wanted]
-    _console_ids[pid] = entries
-    start = max(0, pageIdx) * pageSize
-    window = entries[start:start + pageSize]
-    if not entries:
+        indexed = [(i, e) for i, e in indexed if str(e.get("level") or "").lower() in wanted]
+    if not indexed:
         return "## Console messages\n(none)"
-    lines = [f"## Console messages (showing {start + 1}-{start + len(window)} of {len(entries)})"]
-    for offset, e in enumerate(window):
-        lines.append(f"msgid={start + offset + 1} [{e.get('level')}] {str(e.get('text'))[:300]}")
+    start = max(0, pageIdx) * pageSize
+    window = indexed[start:start + pageSize]
+    lines = [f"## Console messages (showing {start + 1}-{start + len(window)} of {len(indexed)})"]
+    for msgid, e in window:
+        lines.append(f"msgid={msgid} [{e.get('level')}] {str(e.get('text'))[:300]}")
     return "\n".join(lines)
 
 
@@ -1099,4 +1114,6 @@ def dia_cdp(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]
 
 
 if __name__ == "__main__":
-    mcp.run()
+    # No banner: FastMCP prints it to stdout, which pollutes JSON-RPC for CLI clients
+    # such as `mcp-inspector --cli ... | jq`.
+    mcp.run(show_banner=False)

@@ -35,6 +35,8 @@ cond = threading.Condition()
 queue: list[dict] = []
 results: dict[str, dict] = {}
 events: list[dict] = []
+# Liveness of the extension's long-poll, so /health can tell "asleep" from "broken".
+LAST_POLL = {"at": 0.0, "count": 0, "open": 0}
 
 
 def enqueue(cmd: dict) -> str:
@@ -87,24 +89,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/health"):
-            return self._json(200, {"ok": True, "queued": len(queue)})
+            age = (time.time() - LAST_POLL["at"]) if LAST_POLL["at"] else None
+            return self._json(200, {
+                "ok": True,
+                "queued": len(queue),
+                "pollers": LAST_POLL["open"],
+                "polls": LAST_POLL["count"],
+                "last_poll_seconds_ago": round(age, 1) if age is not None else None,
+            })
         if self.path.startswith("/events"):
             return self._json(200, {"events": events[-50:]})
         if self.path.startswith("/cmd"):
             # Long-poll: hand the extension one command, or 204 after QUEUE_WAIT_S.
-            deadline = time.time() + QUEUE_WAIT_S
-            with cond:
-                while not queue:
-                    left = deadline - time.time()
-                    if left <= 0:
-                        self.send_response(204)
-                        self.send_header("content-length", "0")
-                        self.send_header("access-control-allow-origin", "*")
-                        self.end_headers()
-                        return
-                    cond.wait(left)
-                cmd = queue.pop(0)
-            return self._json(200, cmd)
+            LAST_POLL["at"] = time.time()
+            LAST_POLL["count"] += 1
+            LAST_POLL["open"] += 1
+            try:
+                deadline = time.time() + QUEUE_WAIT_S
+                with cond:
+                    while not queue:
+                        left = deadline - time.time()
+                        if left <= 0:
+                            self.send_response(204)
+                            self.send_header("content-length", "0")
+                            self.send_header("access-control-allow-origin", "*")
+                            self.end_headers()
+                            return
+                        cond.wait(left)
+                    cmd = queue.pop(0)
+                return self._json(200, cmd)
+            finally:
+                LAST_POLL["open"] -= 1
         self._json(404, {"error": "not found"})
 
     def do_POST(self):

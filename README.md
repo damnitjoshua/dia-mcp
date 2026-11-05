@@ -94,6 +94,43 @@ python3 tools/selftest.py
 
 It prints one line per check and ends with `18/18 checks passed`.
 
+## Testing
+
+Four ways to prove it works, cheapest first. None of them need Chrome.
+
+```bash
+python3 tests/test_server.py          # 15 tests, no extra dependencies
+python3 tests/test_server.py --live   # the same, plus two calls into the running browser
+python3 tools/parity_test.py          # 20 checks across the chrome-devtools-mcp surface
+python3 tools/selftest.py             # 18 checks of the bridge itself
+```
+
+`tests/test_server.py` follows the testing pattern FastMCP documents: a `fastmcp.Client`
+wired to the server object, async tests, assertions on schemas and on returned values. The
+bridge is stubbed, so it runs offline in a second. Install `pytest` and `pytest-asyncio`,
+set `asyncio_mode = auto`, and `pytest tests/` runs the same file.
+
+The MCP Inspector is the reference client and worth one pass before a release:
+
+```bash
+# what a client sees
+npx @modelcontextprotocol/inspector --cli python3 mcp_server.py \
+  --method tools/list --format json | jq '.result.tools | length'
+
+# one real call
+npx @modelcontextprotocol/inspector --cli python3 mcp_server.py \
+  --method tools/call --tool-name list_pages --format json | jq -r '.result.content[0].text'
+
+# or click around in the browser UI
+npx @modelcontextprotocol/inspector python3 mcp_server.py
+```
+
+The server runs with FastMCP's banner off, so those JSON pipelines stay clean.
+
+`curl -s http://127.0.0.1:9777/health` reports `pollers` and `last_poll_seconds_ago`. A
+single poller a few seconds old means the extension is alive; a growing age means Dia has
+suspended its worker, which wakes on its own again when you click a tab.
+
 ## Tools
 
 The names and arguments are the same as `chrome-devtools-mcp`, so instructions and prompts
