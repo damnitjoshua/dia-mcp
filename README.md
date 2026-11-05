@@ -6,7 +6,7 @@ tabs, your logins, your session. No debug port, no restart, no second browser.
 `dia-mcp` is the Dia equivalent of `chrome-devtools-mcp`. It exposes the Chrome DevTools
 Protocol of a **live** Dia tab over MCP, so any agent client (Claude Desktop, Cursor, Hermes,
 VS Code) can read pages, click, type, inspect network traffic and console errors, and take
-screenshots.
+screenshots. Built with [FastMCP](https://gofastmcp.com).
 
 Also searched for as: Dia MCP, Dia Browser MCP, Dia MCP DevTools, Dia MCP server, Dia DevTools
 MCP.
@@ -23,12 +23,20 @@ The browser is never launched or restarted. Dia stays exactly as it is.
 |---|---|
 | System | macOS (Dia is macOS only) |
 | Browser | Dia 1.56 or newer, already open |
-| Python | 3.9 or newer, no packages to install |
+| Python | 3.10 or newer, plus `fastmcp` |
 | Agent | any MCP client: Hermes, Claude Desktop, Cursor, VS Code, Codex |
 
 ## Setup
 
 Three steps, about two minutes.
+
+### 0. Install FastMCP
+
+```bash
+python3 -m pip install fastmcp
+```
+
+The bridge itself has no dependencies; only the MCP server needs FastMCP.
 
 ### 1. Start the bridge
 
@@ -158,8 +166,8 @@ tools. If you want to attach to the browser you are in, use this repo.
 ## FAQ
 
 **Is this a fork of chrome-devtools-mcp?**
-No. It is a small MCP server written from scratch (stdlib Python, no dependencies), a local
-bridge, and a browser extension. It uses the same underlying protocol, `chrome.debugger`.
+No. It is a small MCP server built with FastMCP, a local bridge, and a browser extension. It
+uses the same underlying protocol, `chrome.debugger`.
 
 **Does it need `--remote-debugging-port`?**
 No. That flag only works at launch. Dia accepts the request through an extension instead, so
@@ -186,7 +194,8 @@ it was loaded.
 |---|---|
 | `extension/` | The Dia extension. Drives one tab at a time through `chrome.debugger` |
 | `tools/bridge.py` | Local bridge, also usable from a terminal as `cmd`, `eval`, `shot` |
-| `mcp_server.py` | The MCP server your agent connects to; starts the bridge if needed |
+| `mcp_server.py` | FastMCP server your agent connects to; starts the bridge if needed |
+| `requirements.txt` | The one Python dependency: `fastmcp` |
 | `tools/selftest.py` | 18 live checks against your own browser |
 | `AGENTS.md` | Instructions for an AI agent to do this setup for you |
 

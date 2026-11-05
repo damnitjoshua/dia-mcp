@@ -25,10 +25,19 @@ uname -s                                  # expect: Darwin
 ls -d /Applications/Dia.app               # Dia must exist
 /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
   /Applications/Dia.app/Contents/Info.plist   # expect 1.56 or newer
-python3 --version                         # expect 3.9 or newer
+python3 --version                         # expect 3.10 or newer
+python3 -c "import fastmcp; print(fastmcp.__version__)"   # expect 4.x, else pip install fastmcp
 ```
 
 If Dia is missing, stop and tell the user. The extension cannot be loaded anywhere else.
+
+## Step 0: install FastMCP
+
+```bash
+python3 -m pip install fastmcp            # the server is built with FastMCP
+```
+
+The bridge uses only the standard library; only `mcp_server.py` needs FastMCP.
 
 ## Step 1: start the bridge
 
