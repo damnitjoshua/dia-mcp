@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# bridge runtime output
+*.log
+shot*.png
+*.jsonl
+
+# editor
+.idea/
+.vscode/

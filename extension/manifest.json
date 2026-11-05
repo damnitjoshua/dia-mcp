@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Dia Live Bridge (probe)",
+  "version": "0.1.0",
+  "description": "Probe: does Dia expose chrome.debugger? Reports capabilities to a local receiver.",
+  "permissions": ["debugger", "tabs", "alarms", "storage"],
+  "host_permissions": ["http://127.0.0.1:9777/*"],
+  "action": { "default_title": "Run Dia Live Bridge probe" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
